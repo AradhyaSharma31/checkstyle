@@ -24,6 +24,7 @@ import static com.google.common.truth.Truth.assertWithMessage;
 import java.beans.PropertyDescriptor;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -135,11 +136,23 @@ public class XdocsExampleFileTest {
         final Path testRoot = Paths.get(
                 "src/xdocs-examples/java/com/puppycrawl/tools/checkstyle/checks");
 
+        assertWithMessage("xdocs examples directory not found: " + exampleRoot)
+                .that(Files.exists(exampleRoot))
+                .isTrue();
+        assertWithMessage("xdocs tests directory not found: " + testRoot)
+                .that(Files.exists(testRoot))
+                .isTrue();
+
         final Set<String> allExamples = collectExampleFiles(exampleRoot);
-        final Set<String> allTestSources = collectReferencedExamples(testRoot, allExamples);
+
+        final Set<String> quotedExamples = allExamples.stream()
+                .map(name -> "\"" + name + "\"")
+                .collect(Collectors.toSet());
+
+        final Set<String> referencedExamples = collectReferencedExamples(testRoot, quotedExamples);
 
         final Set<String> missing = new TreeSet<>(allExamples);
-        missing.removeAll(allTestSources);
+        missing.removeAll(referencedExamples);
 
         assertWithMessage(
                 "Some xdocs examples are not referenced in any *ExamplesTest.java:\n"
@@ -148,56 +161,41 @@ public class XdocsExampleFileTest {
                 .isEmpty();
     }
 
-    private static Set<String> collectExampleFiles(Path exampleRoot)
-            throws IOException {
-        final Set<String> examples = new TreeSet<>();
-
+    private static Set<String> collectExampleFiles(Path exampleRoot) throws IOException {
         try (Stream<Path> paths = Files.walk(exampleRoot)) {
-            paths.filter(Files::isRegularFile)
+            return paths.filter(Files::isRegularFile)
                     .map(Path::getFileName)
                     .map(Path::toString)
                     .filter(name -> name.matches("Example\\d+\\.java"))
-                    .forEach(examples::add);
+                    .collect(Collectors.toCollection(TreeSet::new));
         }
-
-        return examples;
     }
 
     private static Set<String> collectReferencedExamples(
-            Path testRoot, Set<String> allExamples) throws IOException {
+            Path testRoot, Set<String> quotedExamples) throws IOException {
         final Set<String> referenced = new TreeSet<>();
-
         try (Stream<Path> paths = Files.walk(testRoot)) {
             paths.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString()
-                            .endsWith("ExamplesTest.java"))
-                    .forEach(path -> readReferencesFromTestFile(
-                            path, allExamples, referenced));
+                    .filter(path -> path.getFileName().toString().endsWith("ExamplesTest.java"))
+                    .forEach(path -> readReferencesFromTestFile(path, quotedExamples, referenced));
         }
-
         return referenced;
     }
 
     private static void readReferencesFromTestFile(
-            Path testFile,
-            Set<String> allExamples,
-            Set<String> referenced) {
-        try (Stream<String> lines = Files.lines(testFile)) {
-            lines.forEach(line -> addReferencedExamples(
-                    line, allExamples, referenced));
-        }
-        catch (IOException exception) {
-            throw new UncheckedIOException(exception);
+            Path testFile, Set<String> quotedExamples, Set<String> referenced) {
+        try (Stream<String> lines = Files.lines(testFile, StandardCharsets.UTF_8)) {
+            lines.forEach(line -> addReferencedExamples(line, quotedExamples, referenced));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 
     private static void addReferencedExamples(
-            String line,
-            Set<String> allExamples,
-            Set<String> referenced) {
-        for (String example : allExamples) {
-            if (line.contains("\"" + example + "\"")) {
-                referenced.add(example);
+            String line, Set<String> quotedExamples, Set<String> referenced) {
+        for (String quoted : quotedExamples) {
+            if (line.contains(quoted)) {
+                referenced.add(quoted.substring(1, quoted.length() - 1));
             }
         }
     }
